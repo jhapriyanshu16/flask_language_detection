@@ -1,10 +1,14 @@
 from flask import Flask, render_template, request, jsonify
 from langdetect import detect
 import base64
-import wave
-import io
+import os
+from google.cloud import speech_v1p1beta1 as speech
 
 app = Flask(__name__)
+
+# Google Cloud Speech-to-Text client
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "path/to/your/google-credentials.json"  # Replace with your credentials file
+client = speech.SpeechClient()
 
 @app.route('/')
 def index():
@@ -16,18 +20,36 @@ def detect_language():
     audio_data = request.json.get('audio')
     audio_bytes = base64.b64decode(audio_data.split(',')[1])
 
-    # Save the audio to a temporary WAV file
-    with wave.open('temp.wav', 'wb') as wf:
-        wf.setnchannels(1)  # Mono
-        wf.setsampwidth(2)  # 2 bytes (16-bit)
-        wf.setframerate(44100)  # 44.1 kHz
-        wf.writeframes(audio_bytes)
+    # Transcribe audio to text using Google Speech-to-Text
+    try:
+        transcription = transcribe_audio(audio_bytes)
+        if not transcription:
+            return jsonify({'language': 'Unable to transcribe audio'})
 
-    # Detect the language (this is a placeholder; langdetect works on text)
-    # For real-time language detection, you might need a speech-to-text API.
-    detected_language = "Language detection requires text input."
+        # Detect the language of the transcribed text
+        detected_language = detect(transcription)
+        return jsonify({'language': detected_language})
+    except Exception as e:
+        return jsonify({'language': f'Error: {str(e)}'})
 
-    return jsonify({'language': detected_language})
+def transcribe_audio(audio_bytes):
+    # Configure the audio settings
+    audio = speech.RecognitionAudio(content=audio_bytes)
+    config = speech.RecognitionConfig(
+        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+        sample_rate_hertz=44100,
+        language_code="en-US",  # Default language (can be auto-detected)
+        enable_automatic_punctuation=True,
+    )
+
+    # Transcribe the audio
+    response = client.recognize(config=config, audio=audio)
+    if not response.results:
+        return None
+
+    # Get the transcribed text
+    transcription = response.results[0].alternatives[0].transcript
+    return transcription
 
 if __name__ == '__main__':
     app.run(debug=True)
